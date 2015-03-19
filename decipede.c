@@ -56,9 +56,9 @@ usage()
 	printf(
 "Usage: %s [-dh] [-n num] [-C] (dev)\n"
 "\n"
-"    It reads data from the device specified at the end of parameters.\n"
+"    It reads data from the device specified in the end of parameters.\n"
 "    And, it writes the data into some pseudo terminal that it created\n"
-"    when it had started.\n"
+"    when it had started.  The baud rate is 115200 for that devices.\n"
 "    You can use a special word \"con\" to write the data into the standard\n"
 "    output.\n"
 "\n"
@@ -99,21 +99,73 @@ set_non_block(int fd)
 int
 set_non_icanon(int fd)
 {
-	struct termios new;
+	struct termios tty;
 
-	/* child's termios */
-	if (tcgetattr(fd, &new) < 0)
-		err(1, "ERROR: %s: tcgetattr(stdin)", __FUNCTION__);
+	if (tcgetattr(fd, &tty) < 0)
+		err(1, "ERROR: %s: tcgetattr", __FUNCTION__);
 
-//	new.c_iflag &= ~( INLCR | IGNCR | ICRNL | ISTRIP );
-//	new.c_lflag &= ~ECHO;
-//	new.c_lflag |= BRKINT;
-	new.c_lflag &= ~ICANON;
-	new.c_cc[VMIN] = 0;
-	new.c_cc[VTIME] = 0;
+//	tty.c_iflag &= ~( INLCR | IGNCR | ICRNL | ISTRIP );
+//	tty.c_lflag &= ~ECHO;
+//	tty.c_lflag |= BRKINT;
+	tty.c_lflag &= ~ICANON;
+	tty.c_cc[VMIN] = 0;
+	tty.c_cc[VTIME] = 0;
 
-	if (tcsetattr(fd, TCSANOW, &new) == -1)
+	if (tcsetattr(fd, TCSANOW, &tty) == -1)
 		err(1, "tcsetattr(stdin)");
+
+	return 0;
+}
+
+static speed_t
+get_brate(int speed)
+{
+	switch (speed) {
+	case 0: return B0;
+	case 50: return B50;
+	case 75: return B75;
+	case 110: return B110;
+	case 134: return B134;
+	case 150: return B150;
+	case 200: return B200;
+	case 300: return B300;
+	case 600: return B600;
+	case 1200: return B1200;
+	case 1800: return B1800;
+	case 2400: return B2400;
+	case 4800: return B4800;
+	case 9600: return B9600;
+	case 19200: return B19200;
+	case 38400: return B38400;
+#ifndef _POSIX_SOURCE
+	case 7200: return B7200;
+	case 14400: return B14400;
+	case 28800: return B28800;
+	case 57600: return B57600;
+	case 76800: return B76800;
+	case 115200: return B115200;
+	case 230400: return B230400;
+#endif
+	default: return speed;
+	}
+}
+
+int
+set_speed(int fd, int speed)
+{
+	struct termios tty;
+	speed_t brate;
+
+	if (tcgetattr(fd, &tty) < 0)
+		err(1, "ERROR: %s: tcgetattr()", __FUNCTION__);
+
+	brate = get_brate(speed);
+
+	cfsetospeed(&tty, brate);
+	cfsetispeed(&tty, brate);
+
+	if (tcsetattr(fd, TCSANOW, &tty) == -1)
+		err(1, "tcsetattr()");
 
 	return 0;
 }
@@ -173,6 +225,7 @@ dev_open(char *name)
 
 	set_non_block(fd);	/* is it verbose ? */
 	set_non_icanon(fd);
+	set_speed(fd, B115200);	/*XXX it should be a parameter */
 
 	/* XXX set termios */
 
@@ -308,10 +361,14 @@ devs_write_do(struct devs *d, char *buf, int datalen)
 {
 	int wlen;
 
-	if (d->fd == STDOUT_FILENO && f_hex)
+	/* write data to stdout and return */
+	if (d->fd == STDOUT_FILENO && f_hex) {
 		wlen = write_hex(d->fd, buf, datalen);
-	else
-		wlen = write(d->fd, buf, datalen);
+		return 0;
+	}
+
+	/* write data to the device */
+	wlen = write(d->fd, buf, datalen);
 	if (wlen < 0) {
 		switch (errno) {
 		case EAGAIN:
