@@ -458,7 +458,7 @@ main(int argc, char *argv[])
 
 	/* open the original device */
 	if (strcmp(argv[0], "con") == 0 ||
-	    strcmp(argv[0], "stdout") == 0 ||
+	    strcmp(argv[0], "stdin") == 0 ||
 	    strcmp(argv[0], "-") == 0) {
 		set_stdin(0);
 		fd_parent = STDIN_FILENO;
