@@ -44,7 +44,7 @@ struct xxx {
 struct devs *devs_head = NULL;
 
 int n_childs = 1;
-int f_conout = 0;
+int f_stdout = 0;
 int f_debug = 0;
 
 char *prog_name = NULL;
@@ -343,7 +343,7 @@ run(int fd_parent)
 
 	/* open the output devices */
 	child_head = NULL;
-	if (f_conout) {
+	if (f_stdout) {
 		n_childs--;
 		struct devs *d = devs_prepare(DEVTYPE_CON, NULL);
 		devs_add(&child_head, d);
@@ -436,7 +436,7 @@ main(int argc, char *argv[])
 			n_childs = atoi(optarg);
 			break;
 		case 'C':
-			f_conout++;
+			f_stdout++;
 			break;
 		case 'd':
 			f_debug++;
@@ -457,7 +457,9 @@ main(int argc, char *argv[])
 		usage();
 
 	/* open the original device */
-	if (strcmp(argv[0], "con") == 0) {
+	if (strcmp(argv[0], "con") == 0 ||
+	    strcmp(argv[0], "stdout") == 0 ||
+	    strcmp(argv[0], "-") == 0) {
 		set_stdin(0);
 		fd_parent = STDIN_FILENO;
 	} else {
