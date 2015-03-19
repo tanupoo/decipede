@@ -11,7 +11,7 @@ CFLAGS += -Werror -Wall
 #LDFLAGS	+= -L/usr/local/lib
 
 ifeq ($(OS),Linux)
-#LDFLAGS+= -lpthread
+LDFLAGS+= -lutil
 endif
 
 all: $(TARGETS)

@@ -297,11 +297,6 @@ devs_open_pty(char **name, int *fd, int *fd2)
 //	set_non_icanon(*fd2);
 //	set_non_block(*fd2);
 
-#ifdef __linux__
-	if (f_debug)
-		printf("F_GETPIPE_SZ=%d\n", fcntl(*fd, F_GETPIPE_SZ, 0));
-#endif
-
 	set_non_icanon(*fd);
 	set_non_block(*fd);
 
