@@ -45,6 +45,7 @@ struct devs *devs_head = NULL;
 
 int n_childs = 1;
 int f_stdout = 0;
+int f_hex = 0;
 int f_debug = 0;
 
 char *prog_name = NULL;
@@ -171,6 +172,7 @@ dev_open(char *name)
 		err(1, "ERROR: %s: open()", __FUNCTION__);
 
 	set_non_block(fd);	/* is it verbose ? */
+	set_non_icanon(fd);
 
 	/* XXX set termios */
 
@@ -279,11 +281,37 @@ devs_prepare(int devs_type, char *name)
 }
 
 int
+write_hex(int fd, char *data, int datalen)
+{
+	int i;
+	char pb[10];
+	int len;
+
+	for (i = 0; i < datalen; i++) {
+		if (i != 0) {
+			if (i % 16 == 0)
+				write(fd, "\n", 1);
+			else
+			if (i % 4 == 0)
+				write(fd, " ", 1);
+		}
+		len = snprintf(pb, sizeof(pb), "%02x", data[i]&0xff);
+		write(fd, pb, len);
+	}
+	write(fd, "\n", 1);
+
+	return 0;
+}
+
+int
 devs_write_do(struct devs *d, char *buf, int datalen)
 {
 	int wlen;
 
-	wlen = write(d->fd, buf, datalen);
+	if (d->fd == STDOUT_FILENO && f_hex)
+		wlen = write_hex(d->fd, buf, datalen);
+	else
+		wlen = write(d->fd, buf, datalen);
 	if (wlen < 0) {
 		switch (errno) {
 		case EAGAIN:
@@ -430,13 +458,16 @@ main(int argc, char *argv[])
 
 	prog_name = 1 + rindex(argv[0], '/');
 
-	while ((ch = getopt(argc, argv, "n:Cdh")) != -1) {
+	while ((ch = getopt(argc, argv, "n:Cxdh")) != -1) {
 		switch (ch) {
 		case 'n':
 			n_childs = atoi(optarg);
 			break;
 		case 'C':
 			f_stdout++;
+			break;
+		case 'x':
+			f_hex++;
 			break;
 		case 'd':
 			f_debug++;
@@ -451,6 +482,8 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	if (n_childs == 0)
+		usage();
+	if (!f_stdout && f_hex)
 		usage();
 
 	if (argc != 1)
