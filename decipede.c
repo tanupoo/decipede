@@ -35,14 +35,9 @@ struct devs {
 	struct devs *next;
 };
 
-struct xxx {
-	int fd;
-	struct devs *dev;	/* pointer to the devs */
-	struct xxx *next;
-};
-
 struct devs *devs_head = NULL;
 
+char *outfile = "pty_names.txt";
 int n_childs = 1;
 int f_stdout = 0;
 int f_hex = 0;
@@ -54,7 +49,7 @@ void
 usage()
 {
 	printf(
-"Usage: %s [-dh] [-n num] [-C] (dev)\n"
+"Usage: %s [-dh] [-n num] [-o name] [-C] (dev)\n"
 "\n"
 "    It reads data from the device specified in the end of parameters.\n"
 "    And, it writes the data into some pseudo terminal that it created\n"
@@ -63,6 +58,7 @@ usage()
 "    output.\n"
 "\n"
 "    -n: specifies the number of pseudo devices to be created. (default: 1)\n"
+"    -o: specifies the file name including the device names prepared.\n"
 "    -C: writes data into the console as the one of the pseudo devices.\n"
 "\n"
 	, prog_name);
@@ -76,9 +72,9 @@ check_fd(int fd)
 	int flags;
 
 	if ((flags = fcntl(fd, F_GETFL, 0)) == -1)
-		err(1, "ERROR: %s: fcntl(GETFL)", __FUNCTION__);
+		err(1, "ERROR: %s: fcntl(fd=%d, GETFL)", __FUNCTION__, fd);
 	if (f_debug)
-		printf("DEBUG: flags(%d)=%d\n", fd, flags);
+		printf("DEBUG: flags(fd=%d)=%d\n", fd, flags);
 
 	return 0;
 }
@@ -89,9 +85,9 @@ set_non_block(int fd)
 	int flags;
 
 	if ((flags = fcntl(fd, F_GETFL, 0)) == -1)
-		err(1, "ERROR: %s: fcntl(GETFL)", __FUNCTION__);
+		err(1, "ERROR: %s: fcntl(fd=%d, GETFL)", __FUNCTION__, fd);
 	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
-		err(1, "ERROR: %s: fcntl(SETFL)", __FUNCTION__);
+		err(1, "ERROR: %s: fcntl(fd=%d, SETFL)", __FUNCTION__, fd);
 
 	return 0;
 }
@@ -102,17 +98,14 @@ set_non_icanon(int fd)
 	struct termios tty;
 
 	if (tcgetattr(fd, &tty) < 0)
-		err(1, "ERROR: %s: tcgetattr", __FUNCTION__);
+		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
 
-//	tty.c_iflag &= ~( INLCR | IGNCR | ICRNL | ISTRIP );
-//	tty.c_lflag &= ~ECHO;
-//	tty.c_lflag |= BRKINT;
 	tty.c_lflag &= ~ICANON;
 	tty.c_cc[VMIN] = 0;
 	tty.c_cc[VTIME] = 0;
 
 	if (tcsetattr(fd, TCSANOW, &tty) == -1)
-		err(1, "tcsetattr(stdin)");
+		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, fd);
 
 	return 0;
 }
@@ -157,7 +150,7 @@ set_speed(int fd, int speed)
 	speed_t brate;
 
 	if (tcgetattr(fd, &tty) < 0)
-		err(1, "ERROR: %s: tcgetattr()", __FUNCTION__);
+		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
 
 	brate = get_brate(speed);
 
@@ -165,7 +158,7 @@ set_speed(int fd, int speed)
 	cfsetispeed(&tty, brate);
 
 	if (tcsetattr(fd, TCSANOW, &tty) == -1)
-		err(1, "tcsetattr()");
+		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, fd);
 
 	return 0;
 }
@@ -179,7 +172,7 @@ set_stdin(int f_revert)
 	/* revert the terminal and just return */
 	if (f_revert) {
 		if (tcsetattr(fd, TCSANOW, &saved) == -1)
-			err(1, "tcsetattr(stdin)");
+			err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, fd);
 		return 0;
 	}
 
@@ -221,7 +214,7 @@ dev_open(char *name)
 	mode |= O_NONBLOCK;
 
 	if ((fd = open(name, mode)) == -1)
-		err(1, "ERROR: %s: open()", __FUNCTION__);
+		err(1, "ERROR: %s: open(%s)", __FUNCTION__, name);
 
 	set_non_block(fd);	/* is it verbose ? */
 	set_non_icanon(fd);
@@ -267,13 +260,38 @@ devs_add(struct devs **head, struct devs *new)
 }
 
 int
+devfile_init()
+{
+	FILE *fp;
+
+	if ((fp = fopen(outfile, "w+")) == NULL)
+		err(1, "ERROR: %s: fopen(w+)", __FUNCTION__);
+	fclose(fp);
+
+	return 0;
+}
+
+int
+devfile_add(char *name)
+{
+	FILE *fp;
+
+	if ((fp = fopen(outfile, "a")) == NULL)
+		err(1, "ERROR: %s: fopen(a)", __FUNCTION__);
+	fprintf(fp, "%s\n", name);
+	fclose(fp);
+
+	return 0;
+}
+
+int
 devs_open_pty(char **name, int *fd, int *fd2)
 {
 	struct termios pty_term;
 	int brate = B115200;
 
 	/* child's termios */
-	if (tcgetattr(STDIN_FILENO, &pty_term) < 0)
+	if (tcgetattr(STDOUT_FILENO, &pty_term) < 0)
 		err(1, "ERROR: %s: tcgetattr", __FUNCTION__);
 
 	cfsetospeed(&pty_term, brate);
@@ -291,11 +309,8 @@ devs_open_pty(char **name, int *fd, int *fd2)
 	}
 	if (f_debug)
 		printf("DEBUG: pty=%s master=%d slave=%d\n", *name, *fd, *fd2);
-	else
-		printf("%s\n", *name);
-//	close(*fd2);
-//	set_non_icanon(*fd2);
-//	set_non_block(*fd2);
+
+	devfile_add(*name);
 
 	set_non_icanon(*fd);
 	set_non_block(*fd);
@@ -437,7 +452,7 @@ run(int fd_parent)
 	timeout = NULL;
 #ifdef USE_TIMEOUT
 	if ((timeout = calloc(1, sizeof(*timeout))) == NULL)
-		err(1, "calloc(timeout)");
+		err(1, "ERROR: %s: calloc(timeout)", __FUNCTION__);
 		timeout->tv_sec = 1;
 		timeout->tv_usec = 0;
 	}
@@ -510,10 +525,13 @@ main(int argc, char *argv[])
 
 	prog_name = 1 + rindex(argv[0], '/');
 
-	while ((ch = getopt(argc, argv, "n:Cxdh")) != -1) {
+	while ((ch = getopt(argc, argv, "n:o:Cxdh")) != -1) {
 		switch (ch) {
 		case 'n':
 			n_childs = atoi(optarg);
+			break;
+		case 'o':
+			outfile = optarg;
 			break;
 		case 'C':
 			f_stdout++;
@@ -540,6 +558,8 @@ main(int argc, char *argv[])
 
 	if (argc != 1)
 		usage();
+
+	devfile_init();
 
 	/* open the original device */
 	if (strcmp(argv[0], "con") == 0 ||
