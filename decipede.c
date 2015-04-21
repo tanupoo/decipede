@@ -39,6 +39,7 @@ struct devs *devs_head = NULL;
 
 char *outfile = "pty_names.txt";
 int n_childs = 1;
+int n_speed = 115200;
 int f_stdout = 0;
 int f_hex = 0;
 int f_debug = 0;
@@ -53,15 +54,20 @@ usage()
 "\n"
 "    It reads data from the device specified in the end of parameters.\n"
 "    And, it writes the data into some pseudo terminal that it created\n"
-"    when it had started.  The baud rate is 115200 for that devices.\n"
-"    You can use a special word \"con\" to write the data into the standard\n"
-"    output.\n"
+"    when it had started.  The baud rate of the pseudo terminal is 115200\n"
+"    for that devices.  You can use a special word \"con\" to write\n"
+"    the data into the standard output.\n"
 "\n"
 "    -n: specifies the number of pseudo devices to be created. (default: 1)\n"
-"    -o: specifies the file name including the device names prepared.\n"
+"    -b: specifies the baud rate of the read dev. (default is 115200)\n"
+"    -o: specifies the file name in which %s will put the device\n"
+"        names prepared.\n"
 "    -C: writes data into the console as the one of the pseudo devices.\n"
+"    -x: writes data in hex string.\n"
 "\n"
-	, prog_name);
+"TODO:\n"
+"    -C should be separated from -n.\n"
+	, prog_name, prog_name);
 
 	exit(0);
 }
@@ -176,8 +182,10 @@ set_stdin(int f_revert)
 		return 0;
 	}
 
-	/* set terminal */
+#if 0
+	/* stdin is not needed to set icanon */
 	set_non_icanon(fd);
+#endif
 
 	return 0;
 }
@@ -204,7 +212,7 @@ sigh(int sig)
 }
 
 static int
-dev_open(char *name)
+dev_open(char *name, int speed)
 {
 	int fd;
 	int mode;
@@ -218,7 +226,7 @@ dev_open(char *name)
 
 	set_non_block(fd);	/* is it verbose ? */
 	set_non_icanon(fd);
-	set_speed(fd, B115200);	/*XXX it should be a parameter */
+	set_speed(fd, speed);	/*XXX it should be a parameter */
 
 	/* XXX set termios */
 
@@ -525,10 +533,13 @@ main(int argc, char *argv[])
 
 	prog_name = 1 + rindex(argv[0], '/');
 
-	while ((ch = getopt(argc, argv, "n:o:Cxdh")) != -1) {
+	while ((ch = getopt(argc, argv, "n:b:o:Cxdh")) != -1) {
 		switch (ch) {
 		case 'n':
 			n_childs = atoi(optarg);
+			break;
+		case 'b':
+			n_speed = atoi(optarg);
 			break;
 		case 'o':
 			outfile = optarg;
@@ -568,7 +579,7 @@ main(int argc, char *argv[])
 		set_stdin(0);
 		fd_parent = STDIN_FILENO;
 	} else {
-		fd_parent = dev_open(argv[0]);
+		fd_parent = dev_open(argv[0], n_speed);
 	}
 
 	signal(SIGHUP, sigh);
