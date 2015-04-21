@@ -308,6 +308,7 @@ devs_open_pty(char **name, int *fd, int *fd2)
 	if (tcgetattr(STDOUT_FILENO, &pty_term) < 0)
 		err(1, "ERROR: %s: tcgetattr", __FUNCTION__);
 
+	cfmakeraw(&pty_term);
 	cfsetospeed(&pty_term, brate);
 	cfsetispeed(&pty_term, brate);
 
