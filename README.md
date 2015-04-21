@@ -14,15 +14,19 @@ so that you can input any charactors to the pseudo devices.
 
         It reads data from the device specified in the end of parameters.
         And, it writes the data into some pseudo terminal that it created
-        when it had started.  The baud rate is 115200 for that devices.
-        You can use a special word "con" to write the data into the standard
-        output.
+        when it had started.  The baud rate of the pseudo terminal is 115200
+        for that devices.  You can use a special word "con" to write
+        the data into the standard output.
 
         -n: specifies the number of pseudo devices to be created. (default: 1)
-        -o: specifies the file name including the device names prepared.
+        -b: specifies the baud rate of the read dev. (default is 115200)
+        -o: specifies the file name in which decipede will put the prepared device
+            names.  The device names are printed out to the standard output
+            if this option is not specified.
         -C: writes data into the console as the one of the pseudo devices.
+        -x: writes data in hex string.
     ~~~~
 
 ## TODO
 
-- improve to use libev for evolving into *centipede*.
+- think to use libev for evolving into *centipede*.
