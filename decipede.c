@@ -104,8 +104,15 @@ set_non_icanon(int fd)
 {
 	struct termios tty;
 
-	if (tcgetattr(fd, &tty) < 0)
-		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
+	/*
+	 * a piped stdin doesn't need to set icanon.
+	 * the stdin with a terminal still needs it.
+	 * so, we call tcgetattr() and ignore an error if it happened.
+	 */
+	if (tcgetattr(fd, &tty) < 0) {
+		warn("ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
+		return 0;
+	}
 
 	tty.c_lflag &= ~ICANON;
 	tty.c_cc[VMIN] = 0;
@@ -183,10 +190,7 @@ set_stdin(int f_revert)
 		return 0;
 	}
 
-#if 0
-	/* stdin is not needed to set icanon */
 	set_non_icanon(fd);
-#endif
 
 	return 0;
 }
@@ -392,6 +396,8 @@ devs_write_do(struct devs *d, char *buf, int datalen)
 
 	/* write data to the device */
 	wlen = write(d->fd, buf, datalen);
+	if (f_debug > 2)
+		printf("write len=%d\n", wlen);
 	if (wlen < 0) {
 		switch (errno) {
 		case EAGAIN:
@@ -463,11 +469,12 @@ run(int fd_parent)
 
 	/* set timeout */
 	timeout = NULL;
+#define USE_TIMEOUT
 #ifdef USE_TIMEOUT
-	if ((timeout = calloc(1, sizeof(*timeout))) == NULL)
+	if ((timeout = calloc(1, sizeof(*timeout))) == NULL) {
 		err(1, "ERROR: %s: calloc(timeout)", __FUNCTION__);
-		timeout->tv_sec = 1;
-		timeout->tv_usec = 0;
+		timeout->tv_sec = 0;
+		timeout->tv_usec = 500000;
 	}
 #endif
 
@@ -494,6 +501,7 @@ run(int fd_parent)
 			}
 		}
 #ifdef USE_TIMEOUT
+#if 0
 		else if (ret == 0) {
 			/* check fds */
 			check_fd(fd_parent);
@@ -502,6 +510,7 @@ run(int fd_parent)
 				check_fd(d->fd);
 			continue;
 		}
+#endif
 #endif
 
 		if (FD_ISSET(fd_parent, &rfds)) {
