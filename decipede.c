@@ -65,9 +65,6 @@ usage()
 "        if this option is not specified.\n"
 "    -C: writes data into the console as the one of the pseudo devices.\n"
 "    -x: writes data in hex string.\n"
-"\n"
-"TODO:\n"
-"    -C should be separated from -n.\n"
 	, prog_name, prog_name);
 
 	exit(0);
