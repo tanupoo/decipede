@@ -37,7 +37,7 @@ struct devs {
 
 struct devs *devs_head = NULL;
 
-char *outfile = "pty_names.txt";
+char *outfile = NULL;
 int n_childs = 1;
 int n_speed = 115200;
 int f_stdout = 0;
@@ -60,8 +60,9 @@ usage()
 "\n"
 "    -n: specifies the number of pseudo devices to be created. (default: 1)\n"
 "    -b: specifies the baud rate of the read dev. (default is 115200)\n"
-"    -o: specifies the file name in which %s will put the device\n"
-"        names prepared.\n"
+"    -o: specifies the file name in which %s will put the prepared device\n"
+"        names.  The device names are printed out to the standard output\n"
+"        if this option is not specified.\n"
 "    -C: writes data into the console as the one of the pseudo devices.\n"
 "    -x: writes data in hex string.\n"
 "\n"
@@ -284,10 +285,14 @@ devfile_add(char *name)
 {
 	FILE *fp;
 
-	if ((fp = fopen(outfile, "a")) == NULL)
-		err(1, "ERROR: %s: fopen(a)", __FUNCTION__);
-	fprintf(fp, "%s\n", name);
-	fclose(fp);
+	if (outfile != NULL) {
+		if ((fp = fopen(outfile, "a")) == NULL)
+			err(1, "ERROR: %s: fopen(a)", __FUNCTION__);
+		fprintf(fp, "%s\n", name);
+		fclose(fp);
+	} else {
+		printf("%s\n", name);
+	}
 
 	return 0;
 }
@@ -570,7 +575,8 @@ main(int argc, char *argv[])
 	if (argc != 1)
 		usage();
 
-	devfile_init();
+	if (outfile != NULL)
+		devfile_init();
 
 	/* open the original device */
 	if (strcmp(argv[0], "con") == 0 ||
