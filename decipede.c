@@ -17,34 +17,43 @@
 #define USE_CHILD_SIGNAL
 #define USE_OPENPTY
 
+#define DEFAULT_SRC_SPEED 115200
+
 #define MAX_DATALEN	1024
-struct devs {
+struct dev_base {
 	char *name;
-	int type;
-#define DEVTYPE_CON	1
-#define DEVTYPE_PTY	2
 	int fd;
-	int fd2;	/* slave */
-	struct devs *dst_head;
+	struct termios saved;
+};
+
+struct dev_dst {
+	int type;
+#define DEVTYPE_STDIN	0
+#define DEVTYPE_STDOUT	1
+#define DEVTYPE_PTY	2
+	struct dev_base devb;
+	int fd2;	/* XXX pty's slave, to be removed in the future */
 
 	/* XXX should be queue */
 	char buf[MAX_DATALEN];	/* read buffer */
 	int buflen;	/* buffer length */
 	int datalen;	/* data length */
 
-	struct devs *next;
+	struct dev_dst *next;
 };
 
-struct devs *devs_head = NULL;
+struct dev_dst *dst_head = NULL;
+struct dev_base src_dev;
 
 char *outfile = NULL;
-int n_childs = 1;
-int n_speed = 115200;
+int n_obrate = B115200;
 int f_stdout = 0;
 int f_hex = 0;
 int f_debug = 0;
 
 char *prog_name = NULL;
+
+struct termios saved_tty_in;
 
 void
 usage()
@@ -155,7 +164,7 @@ get_brate(int speed)
 }
 
 int
-set_speed(int fd, int speed)
+dev_set_speed(int fd, int speed)
 {
 	struct termios tty;
 	speed_t brate;
@@ -174,88 +183,84 @@ set_speed(int fd, int speed)
 	return 0;
 }
 
+/* revert the tty and just return */
 int
-set_stdin(int f_revert)
+dev_revert(struct dev_base *devb)
 {
-	static struct termios saved;
-	int fd = STDIN_FILENO;
-
-	/* revert the terminal and just return */
-	if (f_revert) {
-		if (tcsetattr(fd, TCSANOW, &saved) == -1)
-			err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, fd);
+	if (devb->fd == STDIN_FILENO)
 		return 0;
-	}
 
-	set_non_icanon(fd);
+	if (tcsetattr(devb->fd, TCSANOW, &devb->saved) == -1)
+		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, devb->fd);
 
 	return 0;
 }
 
-static void
-sigh(int sig)
+int
+dev_set_raw(struct dev_base *devb)
 {
-	switch (sig) {
-	case SIGHUP:
-		set_stdin(1);
-		exit(0);
-		break;
-	case SIGINT:
-		set_stdin(1);
-		exit(0);
-		break;
-	default:
-		if (f_debug) {
-			printf("DEBUG: %s: signal %d was received\n",
-			    __FUNCTION__, sig);
-		}
-	}
-	return;
+	struct termios ts;
+
+	if (tcgetattr(devb->fd, &devb->saved) < 0)
+		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, devb->fd);
+
+	cfmakeraw(&ts);
+
+	if (tcsetattr(devb->fd, TCSANOW, &ts) == -1)
+		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, devb->fd);
+
+	return 0;
 }
 
-static int
-dev_open(char *name, int speed)
+/**
+ * @param name device name. if it it's NULL, the source device is regarded
+ *        as STDIN.
+ * @param speed baud rate. if the name is NULL, it's ignored.
+ */
+int
+dev_open_src(char *name, int speed)
 {
-	int fd;
 	int mode;
 
-	mode = O_RDWR;
-	mode |= O_NOCTTY;
-	mode |= O_NONBLOCK;
+	if (name == NULL) {
+		src_dev.name = "stdin";
+		src_dev.fd = STDIN_FILENO;
+	} else {
+		src_dev.name = strdup(name);
+		mode = O_RDWR;
+		mode |= O_NOCTTY;
+		mode |= O_NONBLOCK;
+		if ((src_dev.fd = open(name, mode)) == -1)
+			err(1, "ERROR: %s: open(%s)", __FUNCTION__, name);
+		dev_set_speed(src_dev.fd, speed);
+		dev_set_raw(&src_dev);
+	}
 
-	if ((fd = open(name, mode)) == -1)
-		err(1, "ERROR: %s: open(%s)", __FUNCTION__, name);
+	set_non_icanon(src_dev.fd);
+	set_non_block(src_dev.fd);
 
-	set_non_block(fd);	/* is it verbose ? */
-	set_non_icanon(fd);
-	set_speed(fd, speed);	/*XXX it should be a parameter */
-
-	/* XXX set termios */
-
-	return fd;
+	return 0;
 }
 
-static struct devs *
-devs_new(char *name, int fd, int fd2)
+static struct dev_dst *
+dev_new(char *name, int fd, int fd2)
 {
-	struct devs *new;
+	struct dev_dst *new;
 
-	if ((new = calloc(1, sizeof(struct devs))) == NULL)
+	if ((new = calloc(1, sizeof(struct dev_dst))) == NULL)
 		err(1, "ERROR: %s: calloc(ap_socket)", __FUNCTION__);
-	new->fd = fd;
+	new->devb.fd = fd;
+	new->devb.name = strdup(name);
 	new->fd2 = fd2;
-	new->name = strdup(name);
-	new->dst_head = NULL;
-
 	new->buflen = sizeof(new->buf);	/* XXX should be queue */
 
 	return new;
 }
 
 int
-devs_add(struct devs **head, struct devs *new)
+dev_add(struct dev_dst **head, struct dev_dst *new)
 {
-	struct devs *p;
+	struct dev_dst *p;
 
 	if (*head == NULL) {
 		*head = new;
@@ -299,18 +304,17 @@ devfile_add(char *name)
 }
 
 int
-devs_open_pty(char **name, int *fd, int *fd2)
+dev_open_pty(char **name, int *fd, int *fd2)
 {
 	struct termios pty_term;
-	int brate = B115200;
 
 	/* child's termios */
 	if (tcgetattr(STDOUT_FILENO, &pty_term) < 0)
 		err(1, "ERROR: %s: tcgetattr", __FUNCTION__);
 
 	cfmakeraw(&pty_term);
-	cfsetospeed(&pty_term, brate);
-	cfsetispeed(&pty_term, brate);
+	cfsetospeed(&pty_term, n_obrate);
+	cfsetispeed(&pty_term, n_obrate);
 
 	if (*name == NULL) {
 		char pty_name[128];
@@ -336,26 +340,26 @@ devs_open_pty(char **name, int *fd, int *fd2)
 /*
  * name: NULL when pty
  */
-struct devs *
-devs_prepare(int devs_type, char *name)
+struct dev_dst *
+dev_prepare(int dev_type, char *name)
 {
 	int fd = 0, fd2 = 0;
 
-	switch (devs_type) {
+	switch (dev_type) {
 	case DEVTYPE_PTY:
-		fd = devs_open_pty(&name, &fd, &fd2);
+		fd = dev_open_pty(&name, &fd, &fd2);
 		break;
-	case DEVTYPE_CON:
+	case DEVTYPE_STDOUT:
 		fd = STDOUT_FILENO;
 		name = "stdout";
-		set_non_block(fd);
+		//set_non_block(fd);
 		break;
 	default:
 		errx(1, "ERROR: %s: invalid device type %d\n",
-		    __FUNCTION__, devs_type);
+		    __FUNCTION__, dev_type);
 	}
 
-	return devs_new(name, fd, fd2);
+	return dev_new(name, fd, fd2);
 }
 
 int
@@ -382,18 +386,18 @@ write_hex(int fd, char *data, int datalen)
 }
 
 int
-devs_write_do(struct devs *d, char *buf, int datalen)
+dev_write_do(struct dev_dst *d, char *buf, int datalen)
 {
 	int wlen;
 
 	/* write data to stdout and return */
-	if (d->fd == STDOUT_FILENO && f_hex) {
-		wlen = write_hex(d->fd, buf, datalen);
+	if (d->devb.fd == STDOUT_FILENO && f_hex) {
+		wlen = write_hex(d->devb.fd, buf, datalen);
 		return 0;
 	}
 
 	/* write data to the device */
-	wlen = write(d->fd, buf, datalen);
+	wlen = write(d->devb.fd, buf, datalen);
 	if (f_debug > 2)
 		printf("write len=%d\n", wlen);
 	if (wlen < 0) {
@@ -401,50 +405,50 @@ devs_write_do(struct devs *d, char *buf, int datalen)
 		case EAGAIN:
 			if (f_debug > 0) {
 				printf("DEBUG: %s: write(EAGAIN) on %s\n",
-				    __FUNCTION__, d->name);
+				    __FUNCTION__, d->devb.name);
 			}
 			return 0;
 		case EIO:
-		{
+		    {
 			int fd, fd2;
-			devs_open_pty(&d->name, &fd, &fd2);
-			if (close(d->fd))
+			dev_open_pty(&d->devb.name, &fd, &fd2);
+			if (close(d->devb.fd))
 				err(1, "ERROR: %s: close(d->fd)", __FUNCTION__);
 			if (close(d->fd2))
 				err(1, "ERROR: %s: close(d->fd)", __FUNCTION__);
-			d->fd = fd;
+			d->devb.fd = fd;
 			d->fd2 = fd2;
 			return 0;
-		}
+		    }
 		}
 		err(1, "ERROR: %s: write()", __FUNCTION__);
 	}
 	else if (datalen != wlen) {
 		warnx("WARN: %s: write(%s) len=%d wlen=%d",
-		    __FUNCTION__, d->name, datalen, wlen);
+		    __FUNCTION__, d->devb.name, datalen, wlen);
 	}
 
 	return 0;
 }
 
 int
-devs_write(struct devs *head, char *buf, int datalen)
+dev_write(struct dev_dst *head, char *buf, int datalen)
 {
-	struct devs *d;
+	struct dev_dst *d;
 
 	if (f_debug > 2)
 		printf("read len=%d\n", datalen);
 
 	for (d = head; d != NULL; d = d->next)
-		devs_write_do(d, buf, datalen);
+		dev_write_do(d, buf, datalen);
 
 	return 0;
 }
 
 int
-run(int fd_parent)
+run(int n_childs)
 {
-	struct devs *child_head;
+	struct dev_dst *child_head;
 	fd_set rfds, wfds, efds;
 	fd_set fdmask;
 	struct timeval *timeout;
@@ -457,12 +461,12 @@ run(int fd_parent)
 	child_head = NULL;
 	if (f_stdout) {
 		n_childs--;
-		struct devs *d = devs_prepare(DEVTYPE_CON, NULL);
-		devs_add(&child_head, d);
+		struct dev_dst *d = dev_prepare(DEVTYPE_STDOUT, NULL);
+		dev_add(&child_head, d);
 	}
 	for (i = 0; i < n_childs; i++) {
-		struct devs *d = devs_prepare(DEVTYPE_PTY, NULL);
-		devs_add(&child_head, d);
+		struct dev_dst *d = dev_prepare(DEVTYPE_PTY, NULL);
+		dev_add(&child_head, d);
 	}
 
 	/* set timeout */
@@ -480,8 +484,8 @@ run(int fd_parent)
 	FD_ZERO(&wfds);
 	FD_ZERO(&efds);
 	FD_ZERO(&fdmask);
-	FD_SET(fd_parent, &fdmask);
-	nfds = fd_parent;
+	FD_SET(src_dev.fd, &fdmask);
+	nfds = src_dev.fd;
 	nfds++;
 
 	do {
@@ -502,8 +506,8 @@ run(int fd_parent)
 #if 0
 		else if (ret == 0) {
 			/* check fds */
-			check_fd(fd_parent);
-			struct devs *d;
+			check_fd(src_dev.fd);
+			struct dev_dst *d;
 			for (d = child_head; d != NULL; d = d->next)
 				check_fd(d->fd);
 			continue;
@@ -511,14 +515,14 @@ run(int fd_parent)
 #endif
 #endif
 
-		if (FD_ISSET(fd_parent, &rfds)) {
+		if (FD_ISSET(src_dev.fd, &rfds)) {
 			char buf[1024];
-			len = read(fd_parent, buf, sizeof(buf));
+			len = read(src_dev.fd, buf, sizeof(buf));
 			if (len < 0) {
 				switch (errno) {
 				case EAGAIN:
 					printf("DEBUG: %s: read:EAGAIN "
-					    "on fd_parent\n", __FUNCTION__);
+					    "on src_dev.fd\n", __FUNCTION__);
 					/* skip it */
 					break;
 				}
@@ -529,7 +533,7 @@ run(int fd_parent)
 				exit(0);
 			}
 			else if (len > 0) {
-				ret = devs_write(child_head, buf, len);
+				ret = dev_write(child_head, buf, len);
 			}
 		}
 	} while(1);
@@ -537,21 +541,56 @@ run(int fd_parent)
 	return 0;
 }
 
+static void
+sigh(int sig)
+{
+	struct dev_dst *p;
+
+	dev_revert(&src_dev);
+
+	for (p = dst_head; p != NULL; p = p->next) {
+		if (p->type == DEVTYPE_STDOUT)
+			dev_revert(&p->devb);
+	}
+
+	if (f_debug) {
+		printf("DEBUG: %s: signal %d was received\n",
+			__FUNCTION__, sig);
+	}
+
+	switch (sig) {
+	case SIGHUP:
+		exit(0);
+		break;
+	case SIGINT:
+		exit(0);
+		break;
+	default:
+		break;
+	}
+
+	return;
+}
+
 int
 main(int argc, char *argv[])
 {
 	int ch;
-	int fd_parent;
+	int n_ispeed = DEFAULT_SRC_SPEED;
+	int n_childs = 1;
 
 	prog_name = 1 + rindex(argv[0], '/');
 
-	while ((ch = getopt(argc, argv, "n:b:o:Cxdh")) != -1) {
+	while ((ch = getopt(argc, argv, "n:b:B:o:Cxdh")) != -1) {
 		switch (ch) {
 		case 'n':
 			n_childs = atoi(optarg);
 			break;
 		case 'b':
-			n_speed = atoi(optarg);
+			n_ispeed = atoi(optarg);
+			break;
+		case 'B':
+			n_obrate = get_brate(atoi(optarg));
 			break;
 		case 'o':
 			outfile = optarg;
@@ -589,15 +628,15 @@ main(int argc, char *argv[])
 	if (strcmp(argv[0], "con") == 0 ||
 	    strcmp(argv[0], "stdin") == 0 ||
 	    strcmp(argv[0], "-") == 0) {
-		set_stdin(0);
-		fd_parent = STDIN_FILENO;
+		dev_open_src(NULL, 0);
 	} else {
-		fd_parent = dev_open(argv[0], n_speed);
+		dev_open_src(argv[0], n_ispeed);
 	}
 
 	signal(SIGHUP, sigh);
+	signal(SIGINT, sigh);
 
-	run(fd_parent);
+	run(n_childs);
 
 	return 0;
 }
