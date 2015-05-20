@@ -23,7 +23,8 @@
 struct dev_base {
 	char *name;
 	int fd;
-	struct termios saved;
+	struct termios ts_saved;
+	int saved;
 };
 
 struct dev_dst {
@@ -182,31 +183,42 @@ dev_set_speed(int fd, int speed)
 	return 0;
 }
 
+int
+dev_set_raw(int fd)
+{
+	struct termios ts;
+
+	if (tcgetattr(fd, &ts) < 0)
+		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
+
+	cfmakeraw(&ts);
+
+	if (tcsetattr(fd, TCSANOW, &ts) == -1)
+		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, fd);
+
+	return 0;
+}
+
 /* revert the tty and just return */
 int
 dev_revert(struct dev_base *devb)
 {
-	if (devb->fd == STDIN_FILENO)
+	if (devb->fd == STDIN_FILENO || !devb->saved)
 		return 0;
 
-	if (tcsetattr(devb->fd, TCSANOW, &devb->saved) == -1)
+	if (tcsetattr(devb->fd, TCSANOW, &devb->ts_saved) == -1)
 		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, devb->fd);
 
 	return 0;
 }
 
 int
-dev_set_raw(struct dev_base *devb)
+dev_save(struct dev_base *devb)
 {
-	struct termios ts;
-
-	if (tcgetattr(devb->fd, &devb->saved) < 0)
+	if (tcgetattr(devb->fd, &devb->ts_saved) < 0)
 		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, devb->fd);
 
-	cfmakeraw(&ts);
-
-	if (tcsetattr(devb->fd, TCSANOW, &ts) == -1)
-		err(1, "ERROR: %s: tcsetattr(fd=%d)", __FUNCTION__, devb->fd);
+	devb->saved++;
 
 	return 0;
 }
@@ -231,8 +243,9 @@ dev_open_src(char *name, int speed)
 		mode |= O_NONBLOCK;
 		if ((src_dev.fd = open(name, mode)) == -1)
 			err(1, "ERROR: %s: open(%s)", __FUNCTION__, name);
+		dev_save(&src_dev);
 		dev_set_speed(src_dev.fd, speed);
-		dev_set_raw(&src_dev);
+		dev_set_raw(src_dev.fd);
 	}
 
 	set_non_icanon(src_dev.fd);
