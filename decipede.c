@@ -150,14 +150,14 @@ get_brate(int speed)
 	case 9600: return B9600;
 	case 19200: return B19200;
 	case 38400: return B38400;
+	case 115200: return B115200;
+	case 230400: return B230400;
 #ifndef _POSIX_SOURCE
 	case 7200: return B7200;
 	case 14400: return B14400;
 	case 28800: return B28800;
 	case 57600: return B57600;
 	case 76800: return B76800;
-	case 115200: return B115200;
-	case 230400: return B230400;
 #endif
 	default: return speed;
 	}
@@ -173,7 +173,6 @@ dev_set_speed(int fd, int speed)
 		err(1, "ERROR: %s: tcgetattr(fd=%d)", __FUNCTION__, fd);
 
 	brate = get_brate(speed);
-
 	cfsetospeed(&tty, brate);
 	cfsetispeed(&tty, brate);
 
