@@ -112,6 +112,12 @@ set_non_icanon(int fd)
 {
 	struct termios tty;
 
+	if (fd == 0) {
+		if (f_debug)
+			warnx("DEBUG: ignore icanon mode (fd=0)");
+		return 0;
+	}
+
 	/*
 	 * a piped stdin doesn't need to set icanon.
 	 * the stdin with a terminal still needs it.
